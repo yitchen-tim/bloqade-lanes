@@ -1,8 +1,14 @@
 import io
 
+from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
+from bloqade.gemini.analysis.logical_validation import GeminiLogicalValidation
+from bloqade.gemini.analysis.measurement_validation import (
+    GeminiTerminalMeasurementValidation,
+)
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, rewrite
+from kirin.validation import ValidationSuite
 
 from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
@@ -15,6 +21,17 @@ from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import squin_to_move
+
+
+def run_squin_kernel_validation(mt: ir.Method):
+    validator = ValidationSuite(
+        [
+            GeminiLogicalValidation,
+            GeminiTerminalMeasurementValidation,
+            FlatKernelNoCloningValidation,
+        ]
+    )
+    return validator.validate(mt)
 
 
 def transversal_rewrites(mt: ir.Method):

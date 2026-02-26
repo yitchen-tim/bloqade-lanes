@@ -72,7 +72,7 @@ def default_observe(
     return detectors, observables
 
 
-@logical.kernel(aggressive_unroll=True, verify=False)
+@logical.kernel(aggressive_unroll=True)
 def main() -> tuple[list[Detector], list[Observable]]:
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)

@@ -12,7 +12,7 @@ from bloqade import tsim
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
-from bloqade.lanes.logical_mvp import compile_squin_to_move
+from bloqade.lanes.logical_mvp import compile_squin_to_move, run_squin_kernel_validation
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
@@ -218,6 +218,7 @@ class GeminiLogicalSimulator:
     def task(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> GeminiLogicalSimulatorTask[RetType]:
+        run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
