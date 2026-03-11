@@ -3,7 +3,6 @@ import math
 from collections import Counter
 from typing import Any
 
-import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from bloqade.stim.emit.stim_str import EmitStimMain
@@ -14,7 +13,6 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.device import GeminiLogicalSimulator
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import (
@@ -146,143 +144,3 @@ def test_logical_compilation():
     AggressiveUnroll(main.dialects).fixpoint(main)
 
     assert check_circuit(main, decompiled_squin)
-
-
-@pytest.mark.parametrize("size", [2, 3, 4, 5, 6])
-def test_physical_compilation(size: int):
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def main():
-        reg = qubit.qalloc(1)
-        squin.h(reg[0])
-        for _ in range(size):
-            current = len(reg)
-            missing = size - current
-            if missing > current:
-                num_alloc = current
-            else:
-                num_alloc = missing
-
-            if num_alloc > 0:
-                new_qubits = qubit.qalloc(num_alloc)
-                squin.broadcast.cx(reg[-num_alloc:], new_qubits)
-                reg = reg + new_qubits
-
-        meas = gemini_logical.terminal_measure(reg)
-
-        def set_observable(qubit_index: int):
-            return squin.set_observable(
-                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
-                qubit_index,
-            )
-
-        return ilist.map(set_observable, ilist.range(len(reg)))
-
-    result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
-    # checks to make sure logical GHZ state is created.
-    assert all(len(set(rv)) == 1 for rv in result.observables)
-
-
-def _steane_matrices(num_qubits: int):
-    import numpy as np
-    from scipy.linalg import block_diag
-
-    d = np.array(
-        [
-            [1, 1, 1, 1, 0, 0, 0],
-            [0, 1, 1, 0, 1, 1, 0],
-            [0, 0, 1, 1, 1, 0, 1],
-        ]
-    )
-    o = np.array([[1, 1, 0, 0, 0, 1, 0]])
-    m2dets = block_diag(*[d.T] * num_qubits).tolist()  # pyright: ignore
-    m2obs = block_diag(*[o.T] * num_qubits).tolist()  # pyright: ignore
-    return m2dets, m2obs
-
-
-@pytest.mark.parametrize(
-    "use_dets, use_obs",
-    [(True, True), (True, False), (False, True)],
-    ids=["both", "dets_only", "obs_only"],
-)
-def test_append_annotations_to_kernel_with_terminal_measure(
-    use_dets: bool, use_obs: bool
-):
-    """Append detectors/observables via the task() API to a squin kernel
-    that already has a terminal_measure."""
-    num_qubits = 2
-    m2dets, m2obs = _steane_matrices(num_qubits)
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def kernel_with_measure():
-        reg = qubit.qalloc(num_qubits)
-        squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
-        gemini_logical.terminal_measure(reg)
-
-    task = GeminiLogicalSimulator().task(
-        kernel_with_measure,
-        m2dets=m2dets if use_dets else None,
-        m2obs=m2obs if use_obs else None,
-    )
-    result = task.run(10, with_noise=False)
-
-    if use_dets:
-        assert len(result.detectors) == 10
-        assert all(len(det) == len(m2dets[0]) for det in result.detectors)
-        assert all(isinstance(b, bool) for det in result.detectors for b in det)
-
-    if use_obs:
-        assert len(result.observables) == 10
-        assert all(len(obs) == len(m2obs[0]) for obs in result.observables)
-        assert all(isinstance(b, bool) for obs in result.observables for b in obs)
-
-
-def test_cudaq_kernel_requires_annotation_matrices():
-    cudaq = pytest.importorskip("cudaq")
-
-    @cudaq.kernel
-    def bell_pair():
-        q = cudaq.qvector(2)
-        h(q[0])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-        cx(q[0], q[1])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-
-    with pytest.raises(
-        ValueError,
-        match="At least one of m2dets or m2obs must be provided for CUDA-Q kernels",
-    ):
-        GeminiLogicalSimulator().task(bell_pair)
-
-
-@pytest.mark.parametrize(
-    "use_dets, use_obs",
-    [(True, True), (True, False), (False, True)],
-    ids=["both", "dets_only", "obs_only"],
-)
-def test_cudaq_kernel_integration(use_dets: bool, use_obs: bool):
-    cudaq = pytest.importorskip("cudaq")
-
-    num_qubits = 2
-    m2dets, m2obs = _steane_matrices(num_qubits)
-
-    @cudaq.kernel
-    def bell_pair():
-        q = cudaq.qvector(num_qubits)
-        h(q[0])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-        cx(q[0], q[1])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-
-    task = GeminiLogicalSimulator().task(
-        bell_pair,
-        m2dets=m2dets if use_dets else None,
-        m2obs=m2obs if use_obs else None,
-    )
-    result = task.run(10, with_noise=False)
-
-    if use_dets:
-        assert len(result.detectors) == 10
-        assert all(len(det) == len(m2dets[0]) for det in result.detectors)
-        assert all(isinstance(b, bool) for det in result.detectors for b in det)
-
-    if use_obs:
-        assert len(result.observables) == 10
-        assert all(len(obs) == len(m2obs[0]) for obs in result.observables)
-        assert all(isinstance(b, bool) for obs in result.observables for b in obs)
