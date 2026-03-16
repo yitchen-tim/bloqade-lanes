@@ -22,7 +22,7 @@ from bloqade.lanes import visualize
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
-from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
@@ -36,7 +36,7 @@ __all__ = [
     "compile_squin_to_move",
     "compile_squin_to_move_and_visualize",
     "compile_to_physical_squin_noise_model",
-    "compile_to_physical_stim_program",
+    "compile_to_stim_program",
     "transversal_rewrites",
     "append_measurements_and_annotations",
 ]
@@ -115,8 +115,9 @@ def compile_squin_to_move(
         ir.Method: The compiled move dialect method.
 
     """
+
     if layout_heuristic is None:
-        layout_heuristic = fixed.LogicalLayoutHeuristic()
+        layout_heuristic = logical_layout.LogicalLayoutHeuristic()
 
     mt = squin_to_move(
         mt,
@@ -208,11 +209,10 @@ def compile_to_physical_squin_noise_model(
         noise_model=noise_model,
         aggressive_unroll=False,
     )
-
     return transformer.emit(move_mt, no_raise=no_raise)
 
 
-def compile_to_physical_stim_program(
+def compile_to_stim_program(
     mt: ir.Method,
     noise_model: NoiseModelABC | None = None,
     no_raise: bool = True,
@@ -244,7 +244,6 @@ def compile_to_physical_stim_program(
     emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
     emit.initialize()
     emit.run(node=noise_kernel)
-
     return buf.getvalue().strip()
 
 
