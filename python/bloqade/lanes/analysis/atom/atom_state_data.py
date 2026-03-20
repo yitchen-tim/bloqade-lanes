@@ -133,7 +133,6 @@ class AtomStateData:
                 continue
 
             blockaded_location = arch_spec.get_blockaded_location(address)
-            arch_spec.get_blockaded_location(address)
             if blockaded_location is None:
                 unpaired.append(qubit_index)
                 continue

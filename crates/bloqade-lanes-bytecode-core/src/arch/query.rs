@@ -187,6 +187,12 @@ impl ArchSpec {
     ) -> Option<(LocationAddr, LocationAddr)> {
         use crate::arch::addr::{Direction, MoveType};
 
+        // Validate the lane address up front so callers always get None
+        // for invalid lanes (e.g. out-of-range word_id or site_id).
+        if !self.check_lane_strict(lane).is_empty() {
+            return None;
+        }
+
         let src = LocationAddr {
             word_id: lane.word_id,
             site_id: lane.site_id,
@@ -230,6 +236,26 @@ impl ArchSpec {
         Some((src, dst))
     }
 
+    /// Get the CZ pair (blockaded location) for a given location.
+    ///
+    /// Returns `Some(LocationAddr)` if the word at `loc.word_id` has CZ data,
+    /// site `loc.site_id` has a partner, and the partner is a valid location.
+    /// Returns `None` otherwise.
+    pub fn get_blockaded_location(&self, loc: &LocationAddr) -> Option<LocationAddr> {
+        let word = self.word_by_id(loc.word_id)?;
+        let cz_pairs = word.has_cz.as_ref()?;
+        let pair = cz_pairs.get(loc.site_id as usize)?;
+        let result = LocationAddr {
+            word_id: pair[0],
+            site_id: pair[1],
+        };
+        // Validate the CZ pair target is in range
+        if self.check_location(&result).is_some() {
+            return None;
+        }
+        Some(result)
+    }
+
     // -- Address validation --
 
     /// Check whether a location address (word_id, site_id) is valid.
@@ -270,6 +296,55 @@ impl ArchSpec {
                 }
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
+                }
+            }
+        }
+        errors
+    }
+
+    /// Strict lane validation: checks everything in [`check_lane`] plus
+    /// verifies that the site/word is a valid source or destination for
+    /// the bus in the given direction.
+    ///
+    /// This is used by [`lane_endpoints`](Self::lane_endpoints) to guarantee
+    /// that returned endpoints are fully valid.
+    pub fn check_lane_strict(&self, addr: &LaneAddr) -> Vec<String> {
+        use super::addr::Direction;
+
+        // Start with the basic checks
+        let mut errors = self.check_lane(addr);
+        if !errors.is_empty() {
+            return errors;
+        }
+
+        // Additionally verify bus resolution for the given direction
+        match addr.move_type {
+            MoveType::SiteBus => {
+                if let Some(bus) = self.site_bus_by_id(addr.bus_id) {
+                    let resolvable = match addr.direction {
+                        Direction::Forward => bus.resolve_forward(addr.site_id).is_some(),
+                        Direction::Backward => bus.resolve_backward(addr.site_id).is_some(),
+                    };
+                    if !resolvable {
+                        errors.push(format!(
+                            "site_id {} is not a valid {:?} source for site_bus {}",
+                            addr.site_id, addr.direction, addr.bus_id
+                        ));
+                    }
+                }
+            }
+            MoveType::WordBus => {
+                if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
+                    let resolvable = match addr.direction {
+                        Direction::Forward => bus.resolve_forward(addr.word_id).is_some(),
+                        Direction::Backward => bus.resolve_backward(addr.word_id).is_some(),
+                    };
+                    if !resolvable {
+                        errors.push(format!(
+                            "word_id {} is not a valid {:?} source for word_bus {}",
+                            addr.word_id, addr.direction, addr.bus_id
+                        ));
+                    }
                 }
             }
         }
@@ -638,5 +713,51 @@ mod tests {
         let json = r#"{"version": "1.0"}"#;
         let result = super::super::ArchSpec::from_json_validated(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_blockaded_location_valid() {
+        let spec = example_arch_spec();
+        // Site 0 in word 0 pairs with site 5 in word 0
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 0,
+        };
+        let pair = spec.get_blockaded_location(&loc).unwrap();
+        assert_eq!(pair.word_id, 0);
+        assert_eq!(pair.site_id, 5);
+    }
+
+    #[test]
+    fn get_blockaded_location_reverse() {
+        let spec = example_arch_spec();
+        // Site 5 in word 0 pairs back with site 0 in word 0
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 5,
+        };
+        let pair = spec.get_blockaded_location(&loc).unwrap();
+        assert_eq!(pair.word_id, 0);
+        assert_eq!(pair.site_id, 0);
+    }
+
+    #[test]
+    fn get_blockaded_location_invalid_word() {
+        let spec = example_arch_spec();
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 99,
+            site_id: 0,
+        };
+        assert!(spec.get_blockaded_location(&loc).is_none());
+    }
+
+    #[test]
+    fn get_blockaded_location_invalid_site() {
+        let spec = example_arch_spec();
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 99,
+        };
+        assert!(spec.get_blockaded_location(&loc).is_none());
     }
 }
